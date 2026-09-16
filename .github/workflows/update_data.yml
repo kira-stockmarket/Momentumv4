@@ -26,7 +26,8 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install yfinance pandas
+        # pyarrow is required for Pandas to write Parquet files
+        pip install yfinance pandas pyarrow
         
     - name: Fetch and Update Data
       run: python fetch_nifty100.py
@@ -36,8 +37,8 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Add the data folder
+        # Add the data folder containing the new parquet files
         git add nifty100_data/
         
         # Check if there are any changes to commit; if yes, commit and push
-        git diff --staged --quiet || (git commit -m "Auto-update Nifty 100 OHLCV data" && git push)
+        git diff --staged --quiet || (git commit -m "Auto-update Nifty 100 OHLCV Parquet data" && git push)
