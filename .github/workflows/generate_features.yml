@@ -1,0 +1,46 @@
+name: Generate Point-in-Time Features
+
+on:
+  workflow_run:
+    workflows: ["Generate Nifty 100 Event Labels"]
+    types:
+      - completed
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  build-features:
+    runs-on: ubuntu-latest
+    
+    # Only run automatically if the label generation job was successful
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas pyarrow numpy
+
+    - name: Run Feature Engine
+      run: python build_features.py
+
+    - name: Commit and Push Feature Store
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Add the feature data directory
+        git add nifty100_features/
+        
+        # Commit and push only if changes exist
+        git diff --staged --quiet || (git commit -m "Auto-generate research features [skip ci]" && git push)
