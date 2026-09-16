@@ -30,15 +30,17 @@ jobs:
         pip install yfinance pandas pyarrow
         
     - name: Fetch and Update Data
-      run: python fetch_nifty100.py
+      run: |
+        python fetch_benchmark.py
+        python fetch_nifty100.py
       
     - name: Commit and Push Changes
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Add the data folder containing the new parquet files
+        # Add both data folders
+        git add benchmark_data/
         git add nifty100_data/
         
-        # Check if there are any changes to commit; if yes, commit and push
-        git diff --staged --quiet || (git commit -m "Auto-update Nifty 100 OHLCV Parquet data" && git push)
+        git diff --staged --quiet || (git commit -m "Auto-update Nifty 100 and Benchmark OHLCV data" && git push)
