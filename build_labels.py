@@ -12,22 +12,29 @@ PRIMARY_H = 20
 TARGET_PCT = 0.20
 STOP_PCT = -0.08
 
-def validate_data_qa(df: pd.DataFrame, ticker: str) -> bool:
+def clean_and_validate_data(df: pd.DataFrame, ticker: str):
     """Institutional Data QA check according to Section 4 of the roadmap."""
     required_cols = {"Open", "High", "Low", "Close", "Volume"}
     if not required_cols.issubset(df.columns):
         print(f"QA FAIL [{ticker}]: Missing required OHLCV columns.")
-        return False
+        return None
     
     if df.index.duplicated().any():
-        print(f"QA WARNING [{ticker}]: Duplicate timestamps detected.")
+        print(f"QA WARNING [{ticker}]: Duplicate timestamps detected. Keeping last.")
         df = df[~df.index.duplicated(keep="last")]
         
-    if (df[["Open", "High", "Low", "Close"]] <= 0).any().any():
-        print(f"QA FAIL [{ticker}]: Non-positive prices detected.")
-        return False
+    # Drop rows with negative or zero prices instead of failing the whole stock
+    bad_price_mask = (df[["Open", "High", "Low", "Close"]] <= 0).any(axis=1)
+    if bad_price_mask.any():
+        bad_count = bad_price_mask.sum()
+        print(f"QA WARNING [{ticker}]: {bad_count} rows with non-positive prices detected and dropped.")
+        df = df[~bad_price_mask]
         
-    return True
+    if df.empty:
+        print(f"QA FAIL [{ticker}]: No valid data remaining after cleaning.")
+        return None
+        
+    return df
 
 def generate_institutional_labels(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy().sort_index()
@@ -142,10 +149,15 @@ def main():
         ticker = os.path.basename(file_path).replace(".parquet", "")
         try:
             df = pd.read_parquet(file_path)
-            if not validate_data_qa(df, ticker):
+            
+            # Use the new cleaning function
+            cleaned_df = clean_and_validate_data(df, ticker)
+            if cleaned_df is None:
                 continue
                 
-            labeled_df = generate_institutional_labels(df)
+            # Pass the cleaned data to the label engine
+            labeled_df = generate_institutional_labels(cleaned_df)
+            
             out_file = os.path.join(OUTPUT_DIR, f"{ticker}_labeled.parquet")
             labeled_df.to_parquet(out_file, engine="pyarrow")
             success_count += 1
