@@ -1,0 +1,18 @@
+--- INSTITUTIONAL V1 XGBOOST WALK-FORWARD METRICS ---
+Target: target_20_before_m8_20d
+Validation Method: Expanding Window Walk-Forward (2018-2026)
+Total Out-of-Sample Predictions: 205151
+Base Rate (Actual Event Frequency): 0.0608
+ROC-AUC Score: 0.7494
+Precision (Accuracy of High-Conviction 'Buy' Signals >= 0.70): 0.2313
+
+Classification Report (High Conviction):
+              precision    recall  f1-score   support
+
+         0.0       0.95      0.96      0.95    192677
+         1.0       0.23      0.18      0.20     12474
+
+    accuracy                           0.91    205151
+   macro avg       0.59      0.57      0.58    205151
+weighted avg       0.90      0.91      0.91    205151
+
