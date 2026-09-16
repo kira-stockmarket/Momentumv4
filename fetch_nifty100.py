@@ -3,7 +3,6 @@ import pandas as pd
 import os
 
 def main():
-    # Exactly 100 major Nifty 100 constituents
     tickers = [
         "ABB.NS", "ADANIENSOL.NS", "ADANIENT.NS", "ADANIGREEN.NS", "ADANIPORTS.NS",
         "ADANIPOWER.NS", "ATGL.NS", "AMBUJACEM.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS",
@@ -22,29 +21,33 @@ def main():
         "PIDILITIND.NS", "PFC.NS", "POWERGRID.NS", "PNB.NS", "RECLTD.NS",
         "RELIANCE.NS", "SBICARD.NS", "SBILIFE.NS", "SRF.NS", "MOTHERSON.NS",
         "SHREECEM.NS", "SIEMENS.NS", "SBIN.NS", "SUNPHARMA.NS", "TVSMOTOR.NS",
-        "TCS.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATAPOWER.NS", "TATASTEEL.NS",
+        "TCS.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TMPV.NS", "TMCV.NS", "TATAPOWER.NS", "TATASTEEL.NS",
         "TECHM.NS", "TITAN.NS", "TORNTPHARM.NS", "TRENT.NS", "ULTRACEMCO.NS",
         "VBL.NS", "VEDL.NS", "WIPRO.NS", "ZOMATO.NS", "ZYDUSLIFE.NS"
     ]
     
-    # Create directory for data storage
     output_dir = 'nifty100_data'
     os.makedirs(output_dir, exist_ok=True)
     
     for ticker in tickers:
         print(f"Downloading data for {ticker}...")
         try:
-            # Download max historical data (period='max' gets all available daily data)
             df = yf.download(ticker, period='max', progress=False)
             
             if not df.empty:
-                # Remove the .NS suffix for cleaner file names
-                clean_name = ticker.replace('.NS', '')
-                file_path = os.path.join(output_dir, f"{clean_name}.csv")
+                # Flatten MultiIndex headers (removes the repeating ticker symbol)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel(1)
                 
-                # Save to CSV, keeping the Date as the index
-                df.to_csv(file_path)
-                print(f"Successfully saved {clean_name}.csv")
+                # Cast all column headers to strings for Parquet compatibility
+                df.columns = df.columns.astype(str)
+                
+                clean_name = ticker.replace('.NS', '')
+                file_path = os.path.join(output_dir, f"{clean_name}.parquet")
+                
+                # Save data to parquet using pyarrow
+                df.to_parquet(file_path, engine='pyarrow')
+                print(f"Successfully saved {clean_name}.parquet")
             else:
                 print(f"No data found for {ticker}")
                 
