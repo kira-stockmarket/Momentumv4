@@ -23,9 +23,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install pandas pyarrow numpy scikit-learn xgboost lightgbm catboost
 
-    - name: Ensure 45-Day Targets Exist
-      run: python add_45d_targets.py
-
     - name: Run Multi-Core Grid Search Optimizer
       run: python optimize_portfolio.py
 
