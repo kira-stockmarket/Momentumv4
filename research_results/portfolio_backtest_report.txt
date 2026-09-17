@@ -3,21 +3,21 @@
 ==========================================================
 Period:                     2018-01-02 to 2026-07-14
 Initial Capital:            INR 1,000,000.00
-Final Net Asset Value:      INR 1,987,434.39
-Max Positions & Sizing:     5 (20% NAV per trade)
+Final Net Asset Value:      INR 3,765,596.96
+Max Positions & Sizing:     4 (25% NAV per trade)
 Friction Deducted:          35 bps round-trip
 ----------------------------------------------------------
-Strategy CAGR:              8.38%
+Strategy CAGR:              16.82%
 Nifty Benchmark CAGR:       10.28%
-Annualized Volatility:      8.13%
-Sharpe Ratio (Rf=6.0%):     0.32
-Max Drawdown:               -11.08%
+Annualized Volatility:      13.34%
+Sharpe Ratio (Rf=6.0%):     0.81
+Max Drawdown:               -15.47%
 ----------------------------------------------------------
-Total Trades Completed:     74
-Win Rate:                   44.59%
-Average Trade Return (Net): 2.00%
-Max Profit in a Single Trade: 31.83%
-Riding Trailing Stop Exits: 36.49%
-Time Expiry Exits:          10.81%
-Hard Stop Hit Rate (-8%):   52.70%
+Total Trades Completed:     52
+Win Rate:                   55.77%
+Average Trade Return (Net): 8.15%
+Max Profit in a Single Trade: 44.24%
+Riding Trailing Stop Exits: 36.54%
+Time Expiry Exits:          34.62%
+Hard Stop Hit Rate:         28.85%
 ==========================================================
