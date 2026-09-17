@@ -12,7 +12,7 @@ BENCHMARK_FILE = "benchmark_data/NSEI.parquet"
 RESULTS_DIR = "research_results"
 
 INITIAL_CAPITAL = 1_000_000.0  
-MAX_POSITIONS = 10             
+MAX_POSITIONS = 100             
 PROB_THRESHOLD = 0.70  
 ROUNDTRIP_FRICTION = 0.0035    
 RISK_FREE_RATE = 0.06          
