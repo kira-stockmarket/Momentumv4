@@ -12,13 +12,13 @@ BENCHMARK_FILE = "benchmark_data/NSEI.parquet"
 RESULTS_DIR = "research_results"
 
 INITIAL_CAPITAL = 1_000_000.0  
-MAX_POSITIONS = 100             
-PROB_THRESHOLD = 0.70  
+MAX_POSITIONS = 5             
+PROB_THRESHOLD = 0.80  
 ROUNDTRIP_FRICTION = 0.0035    
 RISK_FREE_RATE = 0.06          
 TARGET_RETURN = 0.20           
 STOP_LOSS = -0.08              
-MAX_HOLD_DAYS = 60             # Upgraded to 45 trading days
+MAX_HOLD_DAYS = 35             # Upgraded to 45 trading days
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
