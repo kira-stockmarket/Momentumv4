@@ -3,18 +3,18 @@
 ==========================================================
 Period:                     2018-01-02 to 2026-07-13
 Initial Capital:            INR 1,000,000.00
-Final Net Asset Value:      INR 2,070,378.00
+Final Net Asset Value:      INR 1,747,886.38
 Friction Deducted:          35 bps round-trip
 ----------------------------------------------------------
-Strategy CAGR:              8.91%
+Strategy CAGR:              6.77%
 Nifty Benchmark CAGR:       10.37%
-Annualized Volatility:      5.07%
-Sharpe Ratio (Rf=6.0%):     0.57
-Max Drawdown:               -10.19%
+Annualized Volatility:      1.33%
+Sharpe Ratio (Rf=6.0%):     0.53
+Max Drawdown:               -2.19%
 ----------------------------------------------------------
-Total Trades Completed:     86
-Win Rate:                   44.19%
-Average Trade Return (Net): 3.36%
-Target Hit Rate (+20%):     38.37%
-Stop Hit Rate (-8%):        52.33%
+Total Trades Completed:     344
+Win Rate:                   40.12%
+Average Trade Return (Net): 2.56%
+Target Hit Rate (+20%):     37.21%
+Stop Hit Rate (-8%):        58.72%
 ==========================================================
