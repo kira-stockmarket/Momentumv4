@@ -13,12 +13,12 @@ RESULTS_DIR = "research_results"
 
 INITIAL_CAPITAL = 1_000_000.0  
 MAX_POSITIONS = 10             
-PROB_THRESHOLD = 0.75          
+PROB_THRESHOLD = 0.70  
 ROUNDTRIP_FRICTION = 0.0035    
 RISK_FREE_RATE = 0.06          
 TARGET_RETURN = 0.20           
 STOP_LOSS = -0.08              
-MAX_HOLD_DAYS = 45             # Upgraded to 45 trading days
+MAX_HOLD_DAYS = 60             # Upgraded to 45 trading days
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
