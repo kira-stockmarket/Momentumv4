@@ -80,11 +80,13 @@ def simulate_ledger(sig_df, max_pos, stop_loss, max_hold, trail_act):
     unique_dates = sig_df.index.unique().sort_values()
     nav, cash = INITIAL_CAPITAL, INITIAL_CAPITAL
     open_positions, portfolio_history = [], []
-    daily_rf = (1.0 + RISK_FREE_RATE) / 252
+    
+    # CORRECTED COMPOUNDING FORMULA
+    daily_rf = (1.0 + RISK_FREE_RATE) ** (1 / 252) - 1.0
 
     for i in range(len(unique_dates) - 1):
         current_date, next_date = unique_dates[i], unique_dates[i + 1]
-        cash += cash * daily_rf 
+        cash *= (1.0 + daily_rf) 
 
         todays_data = sig_df.loc[current_date]
         if isinstance(todays_data, pd.Series): todays_data = todays_data.to_frame().T
