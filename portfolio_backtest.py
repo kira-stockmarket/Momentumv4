@@ -8,7 +8,7 @@ from catboost import CatBoostClassifier
 from sklearn.ensemble import VotingClassifier
 
 FEATURE_DIR = "nifty100_features"
-BENCHMARK_FILE = "benchmark_data/Market.parquet" # Updated to match the new fetcher naming
+BENCHMARK_FILE = "benchmark_data/NSEI.parquet" 
 RESULTS_DIR = "research_results"
 
 # --- Institutional Execution Parameters ---
@@ -19,7 +19,7 @@ ROUNDTRIP_FRICTION = 0.0035    # 35 bps (STT + Slippage + Brokerage + Taxes)
 RISK_FREE_RATE = 0.06          # 6.0% annual cash yield
 TARGET_RETURN = 0.20           # Take profit
 STOP_LOSS = -0.08              # Hard stop
-MAX_HOLD_DAYS = 30             # Time stop
+MAX_HOLD_DAYS = 45             # Time stop
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
@@ -80,14 +80,14 @@ def run_simulation():
     df = load_panel_data()
 
     target = "target_20_before_m8_20d"
-    # Added 'excess_sector_ret_20d' to the feature list
+    # Reverted exactly to your existing 22 features
     features = [
         'ret_1d', 'ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 
         'dist_sma_20', 'dist_sma_60', 'dist_ema_20', 'dist_ema_60', 
         'dist_52w_high', 'dist_20d_high', 'range_expansion', 
         'atr_14', 'realized_vol_20d', 'volatility_expansion', 
         'rel_volume_20d', 'turnover_acceleration', 'dist_obv_20', 
-        'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d', 'excess_sector_ret_20d'
+        'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d'
     ]
 
     clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
@@ -102,14 +102,13 @@ def run_simulation():
 
     for i in range(len(unique_dates) - 1):
         current_date, next_date = unique_dates[i], unique_dates[i + 1]
-        cash *= (1.0 + daily_rf) # Accrue interest on unallocated cash
+        cash *= (1.0 + daily_rf) 
 
         todays_data = sig_df.loc[current_date]
         if isinstance(todays_data, pd.Series):
             todays_data = todays_data.to_frame().T
         stock_map = todays_data.set_index("Ticker").to_dict(orient="index")
 
-        # 1. Evaluate Exits for Open Positions
         surviving_positions = []
         for pos in open_positions:
             ticker = pos["Ticker"]
@@ -125,7 +124,6 @@ def run_simulation():
 
             exit_trade, raw_return, exit_reason = False, 0.0, ""
 
-            # Standard Stops
             if low_ret <= STOP_LOSS:
                 exit_trade, raw_return, exit_reason = True, STOP_LOSS, "STOP_LOSS"
             elif high_ret >= TARGET_RETURN:
@@ -146,11 +144,9 @@ def run_simulation():
 
         open_positions = surviving_positions
 
-        # 2. Record End of Day NAV
         nav = cash + sum(p["Current_Value"] for p in open_positions)
         portfolio_history.append({"Date": current_date, "NAV": nav, "Cash": cash, "Positions_Count": len(open_positions)})
 
-        # 3. Enter New Positions (Signal at Close, Fill at Next Open)
         eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
         open_tickers = {p["Ticker"] for p in open_positions}
         available_slots = MAX_POSITIONS - len(open_positions)
@@ -176,7 +172,6 @@ def run_simulation():
                             "Allocated_Capital": allocation, "Current_Value": allocation, "Days_Held": 0
                         })
 
-    # --- Generate Institutional Report ---
     perf_df = pd.DataFrame(portfolio_history).set_index("Date")
     trades_df = pd.DataFrame(trade_ledger)
 
@@ -188,14 +183,11 @@ def run_simulation():
     sharpe = ((daily_returns.mean() - (RISK_FREE_RATE / 252)) / daily_returns.std()) * np.sqrt(252) if daily_returns.std() > 0 else 0
     max_dd = ((perf_df["NAV"] - perf_df["NAV"].cummax()) / perf_df["NAV"].cummax()).min()
 
-    # Benchmark tracking
     nifty_cagr = np.nan
     if os.path.exists(BENCHMARK_FILE):
         bench = pd.read_parquet(BENCHMARK_FILE)
         bench.index = pd.to_datetime(bench.index)
-        # Assuming the column is named 'Market_Close' based on the updated fetcher
-        close_col = "Market_Close" if "Market_Close" in bench.columns else "Close"
-        bench_aligned = bench.loc[perf_df.index[0]:perf_df.index[-1], close_col]
+        bench_aligned = bench.loc[perf_df.index[0]:perf_df.index[-1], "Close"]
         nifty_cagr = ((bench_aligned.iloc[-1] / bench_aligned.iloc[0]) ** (365.25 / total_days)) - 1.0
 
     win_rate = (trades_df["Net_Return"] > 0).mean() if len(trades_df) > 0 else 0.0
@@ -210,7 +202,7 @@ def run_simulation():
         f"Friction Deducted:          {ROUNDTRIP_FRICTION * 10000:.0f} bps round-trip\n"
         f"----------------------------------------------------------\n"
         f"Strategy CAGR:              {cagr * 100:.2f}%\n"
-        f"Nifty Benchmark CAGR:       {nifty_cagr * 100:.2f}%\n"
+        f"Nifty 50 Benchmark CAGR:    {nifty_cagr * 100:.2f}%\n"
         f"Annualized Volatility:      {ann_vol * 100:.2f}%\n"
         f"Sharpe Ratio (Rf=6.0%):     {sharpe:.2f}\n"
         f"Max Drawdown:               {max_dd * 100:.2f}%\n"
