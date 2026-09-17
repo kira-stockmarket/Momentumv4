@@ -19,12 +19,12 @@ ROUNDTRIP_FRICTION = 0.0035
 RISK_FREE_RATE = 0.06          
 TRAILING_DISTANCE = 0.10       # Always trail by 10% behind high
 
-# --- Optimization Grid ---
+# --- EXPANDED Optimization Grid (500 Combinations) ---
 PARAM_GRID = {
-    "MAX_POSITIONS": [5, 8, 10],               # 20%, 12.5%, 10% allocation
-    "HARD_STOP_LOSS": [-0.06, -0.08, -0.10],   # Tight vs Standard vs Loose stop
-    "MAX_HOLD_DAYS": [20, 30, 45],             # Short vs Medium vs Long hold
-    "TRAILING_ACTIVATION": [0.15, 0.20]        # When to start riding momentum
+    "MAX_POSITIONS": [3, 4, 5, 8, 10],                 # 33%, 25%, 20%, 12.5%, 10% allocation
+    "HARD_STOP_LOSS": [-0.05, -0.06, -0.08, -0.10, -0.12], # Tight to very loose stops
+    "MAX_HOLD_DAYS": [15, 20, 30, 40, 45],             # Fast exits to maximum allowable holds
+    "TRAILING_ACTIVATION": [0.12, 0.15, 0.20, 0.25]    # Early lock-ins vs late trailing
 }
 
 def load_panel_data():
@@ -42,7 +42,7 @@ def load_panel_data():
     return panel.sort_index()
 
 def generate_signals_once(clean_df, features, target):
-    """Generate and cache signals so we don't retrain the ML model 50 times."""
+    """Generate and cache signals so we don't retrain the ML model 500 times."""
     start_year = 2018
     end_year = clean_df.index.year.max()
     signals = []
@@ -81,7 +81,7 @@ def simulate_ledger(sig_df, max_pos, stop_loss, max_hold, trail_act):
     nav, cash = INITIAL_CAPITAL, INITIAL_CAPITAL
     open_positions, portfolio_history = [], []
     
-    # CORRECTED COMPOUNDING FORMULA
+    # Corrected interest compounding
     daily_rf = (1.0 + RISK_FREE_RATE) ** (1 / 252) - 1.0
 
     for i in range(len(unique_dates) - 1):
@@ -181,6 +181,8 @@ def run_optimization():
     ]
 
     clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
+    
+    # Generate ML signals once, then reuse for all 500 combinations
     sig_df = generate_signals_once(clean_df, features, target)
 
     keys, values = zip(*PARAM_GRID.items())
@@ -207,7 +209,10 @@ def run_optimization():
             "Sharpe": sharpe,
             "Max DD": max_dd
         })
-        print(f"[{idx+1}/{len(combinations)}] Tested Pos:{params['MAX_POSITIONS']} | Stop:{params['HARD_STOP_LOSS']} | Hold:{params['MAX_HOLD_DAYS']} -> CAGR: {cagr*100:.2f}%")
+        
+        # Keep track of progress
+        if (idx + 1) % 50 == 0:
+            print(f"[{idx+1}/{len(combinations)}] combinations evaluated...")
 
     results_df = pd.DataFrame(results).sort_values(by="CAGR", ascending=False)
     
@@ -217,9 +222,9 @@ def run_optimization():
     results_df["Max DD"] = (results_df["Max DD"] * 100).map("{:.2f}%".format)
 
     print("\n==================================================================")
-    print("                TOP 5 EXECUTION SETUPS (BY CAGR)                  ")
+    print("                TOP 10 EXECUTION SETUPS (BY CAGR)                 ")
     print("==================================================================")
-    print(results_df.head(5).to_string(index=False))
+    print(results_df.head(10).to_string(index=False))
     print("==================================================================")
 
     results_df.to_csv(os.path.join(RESULTS_DIR, "parameter_sweep_results.csv"), index=False)
