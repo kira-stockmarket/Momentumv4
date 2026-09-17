@@ -1,17 +1,17 @@
---- INSTITUTIONAL V2 HEAVY ENSEMBLE METRICS ---
-Target: target_20_before_m8_20d
-Validation: Purged Walk-Forward (20-Day Embargo)
-Base Rate: 0.0608
-ROC-AUC Score: 0.7501
-Precision (Accuracy of Buy Signals >= 0.75): 0.2613
+--- INSTITUTIONAL V3 HEAVY ENSEMBLE METRICS (45-DAY) ---
+Target: target_20_before_m8_45d
+Validation: Purged Walk-Forward (65-Day Embargo)
+Base Rate: 0.1675
+ROC-AUC Score: 0.6339
+Precision (Buy Signals >= 0.75): 0.2989
 
 Classification Report:
               precision    recall  f1-score   support
 
-         0.0       0.94      0.98      0.96    192677
-         1.0       0.26      0.11      0.16     12474
+         0.0       0.83      1.00      0.91    168717
+         1.0       0.30      0.00      0.01     33934
 
-    accuracy                           0.93    205151
-   macro avg       0.60      0.55      0.56    205151
-weighted avg       0.90      0.93      0.91    205151
+    accuracy                           0.83    202651
+   macro avg       0.57      0.50      0.46    202651
+weighted avg       0.74      0.83      0.76    202651
 

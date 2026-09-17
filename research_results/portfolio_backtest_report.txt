@@ -1,20 +1,20 @@
 ==========================================================
         INSTITUTIONAL PORTFOLIO SIMULATION REPORT         
 ==========================================================
-Period:                     2018-01-02 to 2026-08-17
+Period:                     2018-01-02 to 2026-07-13
 Initial Capital:            INR 1,000,000.00
-Final Net Asset Value:      INR 3,380,170.63
+Final Net Asset Value:      INR 2,070,378.00
 Friction Deducted:          35 bps round-trip
 ----------------------------------------------------------
-Strategy CAGR:              15.17%
-Nifty 50 Benchmark CAGR:    10.29%
-Annualized Volatility:      17.58%
+Strategy CAGR:              8.91%
+Nifty Benchmark CAGR:       10.37%
+Annualized Volatility:      5.07%
 Sharpe Ratio (Rf=6.0%):     0.57
-Max Drawdown:               -33.31%
+Max Drawdown:               -10.19%
 ----------------------------------------------------------
-Total Trades Completed:     611
-Win Rate:                   38.13%
-Average Trade Return (Net): 1.80%
-Target Hit Rate (+20%):     33.39%
-Stop Hit Rate (-8%):        60.07%
+Total Trades Completed:     86
+Win Rate:                   44.19%
+Average Trade Return (Net): 3.36%
+Target Hit Rate (+20%):     38.37%
+Stop Hit Rate (-8%):        52.33%
 ==========================================================
