@@ -1,21 +1,20 @@
 ==========================================================
-      INSTITUTIONAL RISK-ADJUSTED SIMULATION REPORT       
+        INSTITUTIONAL PORTFOLIO SIMULATION REPORT         
 ==========================================================
 Period:                     2018-01-02 to 2026-08-17
 Initial Capital:            INR 1,000,000.00
-Final Net Asset Value:      INR 1,145,918.65
-Risk Rules Applied:         200D SMA Regime Filter + Trailing Stops
+Final Net Asset Value:      INR 3,380,170.63
+Friction Deducted:          35 bps round-trip
 ----------------------------------------------------------
-Strategy CAGR:              1.59%
+Strategy CAGR:              15.17%
 Nifty 50 Benchmark CAGR:    10.29%
-Annualized Volatility:      10.54%
-Sharpe Ratio (Rf=6.0%):     -0.36
-Max Drawdown:               -31.43%
+Annualized Volatility:      17.58%
+Sharpe Ratio (Rf=6.0%):     0.57
+Max Drawdown:               -33.31%
 ----------------------------------------------------------
-Total Trades Completed:     473
-Win Rate:                   38.48%
-Average Trade Return (Net): -0.39%
-Target Hit Rate (+20%):     15.01%
-Trailing Stop Rate (+4%):   16.91%
-Hard Stop Rate (-8%):       49.68%
+Total Trades Completed:     611
+Win Rate:                   38.13%
+Average Trade Return (Net): 1.80%
+Target Hit Rate (+20%):     33.39%
+Stop Hit Rate (-8%):        60.07%
 ==========================================================
