@@ -13,9 +13,10 @@ RESULTS_DIR = "research_results"
 
 # --- OPTIMIZED INSTITUTIONAL EXECUTION PARAMETERS ---
 INITIAL_CAPITAL = 1_000_000.0  
-MAX_POSITIONS = 4              # Adjusted to 25% allocation to slightly smooth the Max DD
+MAX_POSITIONS = 4              # 25% NAV per trade
 PROB_THRESHOLD = 0.75          # AI High-Conviction Only
 ROUNDTRIP_FRICTION = 0.0035    
+RISK_FREE_RATE = 0.06          # <--- Fixed missing variable
 
 # --- MOMENTUM RIDING RULES ---
 HARD_STOP_LOSS = -0.15         # Give trades room to survive shakeouts
@@ -32,6 +33,30 @@ def load_panel_data():
         if isinstance(tdf.columns, pd.MultiIndex):
             tdf.columns = tdf.columns.droplevel(1)
         tdf["Ticker"] = ticker
+        
+        # Self-healing logic for the 45-day target if it's missing in some files
+        if 'target_20_before_m8_45d' not in tdf.columns:
+            target_col = np.full(len(tdf), np.nan)
+            if len(tdf) > 46:
+                opens = tdf['Open'].values
+                highs = tdf['High'].values
+                lows = tdf['Low'].values
+                for i in range(len(tdf) - 46):
+                    entry_price = opens[i + 1]
+                    if pd.isna(entry_price) or entry_price <= 0: continue
+                    target_price = entry_price * 1.20
+                    stop_price = entry_price * 0.92
+                    window_highs = highs[i + 1 : i + 46]
+                    window_lows = lows[i + 1 : i + 46]
+                    hit = 0
+                    for h, l in zip(window_highs, window_lows):
+                        if l <= stop_price: break
+                        if h >= target_price:
+                            hit = 1
+                            break
+                    target_col[i] = hit
+            tdf['target_20_before_m8_45d'] = target_col
+            
         df_list.append(tdf)
     panel = pd.concat(df_list)
     panel.index = pd.to_datetime(panel.index)
@@ -47,14 +72,14 @@ def generate_out_of_sample_signals(clean_df, features, target):
         test_start_date = pd.to_datetime(f"{test_year}-01-01")
         embargo_cutoff = test_start_date - pd.Timedelta(days=65) 
         
-        train_mask = clean_df.index <= embargo_cutoff
+        train_mask = (clean_df.index <= embargo_cutoff)
         test_mask = clean_df.index.year == test_year
 
         X_train, y_train = clean_df.loc[train_mask, features], clean_df.loc[train_mask, target]
         test_data = clean_df.loc[test_mask]
-        if test_data.empty: continue
+        if test_data.empty or X_train.empty: continue
 
-        scale_weight = (len(y_train) - y_train.sum()) / y_train.sum()
+        scale_weight = (len(y_train) - y_train.sum()) / y_train.sum() if y_train.sum() > 0 else 1.0
 
         clf_xgb = xgb.XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_weight, random_state=42, n_jobs=-1)
         clf_lgb = lgb.LGBMClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_weight, random_state=42, n_jobs=-1, verbose=-1)
@@ -75,14 +100,22 @@ def run_simulation():
     df = load_panel_data()
 
     target = "target_20_before_m8_45d"
+    
+    # Sector relative features are included here
     features = [
         'ret_1d', 'ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 
         'dist_sma_20', 'dist_sma_60', 'dist_ema_20', 'dist_ema_60', 
         'dist_52w_high', 'dist_20d_high', 'range_expansion', 
         'atr_14', 'realized_vol_20d', 'volatility_expansion', 
         'rel_volume_20d', 'turnover_acceleration', 'dist_obv_20', 
-        'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d'
+        'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d',
+        'excess_sector_ret_20d' 
     ]
+
+    # Ensure all columns exist to prevent dropna errors
+    for c in features:
+        if c not in df.columns:
+            df[c] = 0.0
 
     clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
     sig_df = generate_out_of_sample_signals(clean_df, features, target)
@@ -112,22 +145,18 @@ def run_simulation():
 
             row = stock_map[ticker]
             
-            # Track highest price achieved during the trade
             pos["Highest_High"] = max(pos.get("Highest_High", pos["Entry_Price"]), row["High"])
             max_gain = (pos["Highest_High"] - pos["Entry_Price"]) / pos["Entry_Price"]
             
             low_ret = (row["Low"] - pos["Entry_Price"]) / pos["Entry_Price"]
             open_ret = (row["Open"] - pos["Entry_Price"]) / pos["Entry_Price"]
 
-            # Dynamic Stop Loss Logic
             current_stop_loss = HARD_STOP_LOSS
             if max_gain >= TRAILING_ACTIVATION:
-                # If stock hit +20%, trail by 10% behind the highest point
                 current_stop_loss = max(HARD_STOP_LOSS, max_gain - TRAILING_DISTANCE)
 
             exit_trade, raw_return, exit_reason = False, 0.0, ""
 
-            # Check Stops (with gap-down penalty)
             if low_ret <= current_stop_loss:
                 exit_trade = True
                 raw_return = min(current_stop_loss, open_ret) 
@@ -152,7 +181,6 @@ def run_simulation():
         nav = cash + sum(p["Current_Value"] for p in open_positions)
         portfolio_history.append({"Date": current_date, "NAV": nav, "Cash": cash, "Positions_Count": len(open_positions)})
 
-        # New Entries
         eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
         open_tickers = {p["Ticker"] for p in open_positions}
         available_slots = MAX_POSITIONS - len(open_positions)
@@ -203,7 +231,7 @@ def run_simulation():
         f"Period:                     {perf_df.index[0].date()} to {perf_df.index[-1].date()}\n"
         f"Initial Capital:            INR {INITIAL_CAPITAL:,.2f}\n"
         f"Final Net Asset Value:      INR {perf_df['NAV'].iloc[-1]:,.2f}\n"
-        f"Max Positions & Sizing:     {MAX_POSITIONS} (20% NAV per trade)\n"
+        f"Max Positions & Sizing:     {MAX_POSITIONS} ({100/MAX_POSITIONS:.0f}% NAV per trade)\n"
         f"Friction Deducted:          {ROUNDTRIP_FRICTION * 10000:.0f} bps round-trip\n"
         f"----------------------------------------------------------\n"
         f"Strategy CAGR:              {cagr * 100:.2f}%\n"
@@ -218,7 +246,7 @@ def run_simulation():
         f"Max Profit in a Single Trade: {trades_df['Net_Return'].max() * 100:.2f}%\n"
         f"Riding Trailing Stop Exits: {(trades_df['Exit_Reason'] == 'TRAILING_STOP_PROFIT').mean() * 100:.2f}%\n"
         f"Time Expiry Exits:          {(trades_df['Exit_Reason'] == 'TIME_EXPIRY').mean() * 100:.2f}%\n"
-        f"Hard Stop Hit Rate (-8%):   {(trades_df['Exit_Reason'] == 'HARD_STOP').mean() * 100:.2f}%\n"
+        f"Hard Stop Hit Rate:         {(trades_df['Exit_Reason'] == 'HARD_STOP').mean() * 100:.2f}%\n"
         f"==========================================================\n"
     )
     print(report)
