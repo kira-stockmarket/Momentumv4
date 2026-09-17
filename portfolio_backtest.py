@@ -11,18 +11,17 @@ FEATURE_DIR = "nifty100_features"
 BENCHMARK_FILE = "benchmark_data/NSEI.parquet" 
 RESULTS_DIR = "research_results"
 
-# --- Institutional Execution Parameters ---
-INITIAL_CAPITAL = 1_000_000.0  # INR 10 Lakhs
-MAX_POSITIONS = 5              # Upgraded: 20% allocation per trade to fix cash drag
-PROB_THRESHOLD = 0.75          # High-conviction threshold
-ROUNDTRIP_FRICTION = 0.0035    # 35 bps (STT + Slippage + Brokerage + Taxes)
-RISK_FREE_RATE = 0.06          # 6.0% annual cash yield
+# --- OPTIMIZED INSTITUTIONAL EXECUTION PARAMETERS ---
+INITIAL_CAPITAL = 1_000_000.0  
+MAX_POSITIONS = 4              # Adjusted to 25% allocation to slightly smooth the Max DD
+PROB_THRESHOLD = 0.75          # AI High-Conviction Only
+ROUNDTRIP_FRICTION = 0.0035    
 
-# --- Momentum Riding Risk Rules ---
-HARD_STOP_LOSS = -0.08         # Initial Stop Loss
-MAX_HOLD_DAYS = 45             # Time stop
-TRAILING_ACTIVATION = 0.20     # Only activate trailing stop after hitting +20%
-TRAILING_DISTANCE = 0.10       # Trail by 10% behind the highest high
+# --- MOMENTUM RIDING RULES ---
+HARD_STOP_LOSS = -0.15         # Give trades room to survive shakeouts
+MAX_HOLD_DAYS = 60             # Give winners time to run
+TRAILING_ACTIVATION = 0.35     # Only lock in after a massive +35% move
+TRAILING_DISTANCE = 0.10       # Trail 10% behind the peak
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
