@@ -11,15 +11,18 @@ FEATURE_DIR = "nifty100_features"
 BENCHMARK_FILE = "benchmark_data/NSEI.parquet"
 RESULTS_DIR = "research_results"
 
-# --- Institutional Execution Parameters ---
-INITIAL_CAPITAL = 1_000_000.0  # INR 10 Lakhs
-MAX_POSITIONS = 10             # Max concurrent holdings (10% allocation each)
-PROB_THRESHOLD = 0.75          # Heavy Ensemble high-conviction threshold
-ROUNDTRIP_FRICTION = 0.0035    # 35 bps (STT + Slippage + Brokerage + Taxes)
-RISK_FREE_RATE = 0.06          # 6.0% annual cash yield
-TARGET_RETURN = 0.20           # Take profit
-STOP_LOSS = -0.08              # Hard stop
-MAX_HOLD_DAYS = 20             # Time stop
+# --- Institutional Execution & Risk Parameters ---
+INITIAL_CAPITAL = 1_000_000.0  
+MAX_POSITIONS = 10             
+PROB_THRESHOLD = 0.75          
+ROUNDTRIP_FRICTION = 0.0035    
+RISK_FREE_RATE = 0.06          
+TARGET_RETURN = 0.20           
+HARD_STOP_LOSS = -0.08         
+MAX_HOLD_DAYS = 20             
+# New Dynamic Risk Parameters
+TRAILING_ACTIVATION = 0.12     # Move stop to breakeven+ when stock hits +12%
+TRAILING_STOP_LEVEL = 0.04     # Lock in +4% profit
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
@@ -40,7 +43,6 @@ def load_panel_data():
     return panel.sort_index()
 
 def generate_out_of_sample_signals(clean_df, features, target):
-    """Runs the 20-day Embargoed Walk-Forward Ensemble to generate trade signals."""
     start_year = 2018
     end_year = clean_df.index.year.max()
     signals = []
@@ -75,6 +77,16 @@ def generate_out_of_sample_signals(clean_df, features, target):
 
     return pd.concat(signals).sort_index()
 
+def load_market_regime():
+    """Loads Nifty 50 and calculates the 200-day SMA regime filter."""
+    if not os.path.exists(BENCHMARK_FILE):
+        return {}
+    bench = pd.read_parquet(BENCHMARK_FILE)
+    bench.index = pd.to_datetime(bench.index)
+    bench['SMA_200'] = bench['Close'].rolling(200).mean()
+    bench['Bull_Regime'] = bench['Close'] > bench['SMA_200']
+    return bench['Bull_Regime'].to_dict()
+
 def run_simulation():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     df = load_panel_data()
@@ -91,8 +103,9 @@ def run_simulation():
 
     clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
     sig_df = generate_out_of_sample_signals(clean_df, features, target)
+    regime_map = load_market_regime()
 
-    print("Simulating execution ledger and capital curve...")
+    print("Simulating execution ledger with Regime Filters and Dynamic Stops...")
     unique_dates = sig_df.index.unique().sort_values()
     nav, cash = INITIAL_CAPITAL, INITIAL_CAPITAL
     open_positions, portfolio_history, trade_ledger = [], [], []
@@ -101,7 +114,7 @@ def run_simulation():
 
     for i in range(len(unique_dates) - 1):
         current_date, next_date = unique_dates[i], unique_dates[i + 1]
-        cash *= (1.0 + daily_rf) # Accrue interest on unallocated cash
+        cash *= (1.0 + daily_rf)
 
         todays_data = sig_df.loc[current_date]
         if isinstance(todays_data, pd.Series):
@@ -119,14 +132,27 @@ def run_simulation():
                 continue
 
             row = stock_map[ticker]
+            # Track highest price achieved during the trade to activate trailing stops
+            pos["Highest_High"] = max(pos.get("Highest_High", pos["Entry_Price"]), row["High"])
+            
+            max_gain = (pos["Highest_High"] - pos["Entry_Price"]) / pos["Entry_Price"]
             high_ret = (row["High"] - pos["Entry_Price"]) / pos["Entry_Price"]
             low_ret = (row["Low"] - pos["Entry_Price"]) / pos["Entry_Price"]
+            open_ret = (row["Open"] - pos["Entry_Price"]) / pos["Entry_Price"]
 
             exit_trade, raw_return, exit_reason = False, 0.0, ""
 
-            # Conservative evaluation: Stop loss triggers before take profit on wild days
-            if low_ret <= STOP_LOSS:
-                exit_trade, raw_return, exit_reason = True, STOP_LOSS, "STOP_LOSS"
+            # Dynamic Stop Loss Logic
+            current_stop_loss = HARD_STOP_LOSS
+            if max_gain >= TRAILING_ACTIVATION:
+                current_stop_loss = TRAILING_STOP_LEVEL
+
+            # Evaluate Stops (with gap-down penalty)
+            if low_ret <= current_stop_loss:
+                exit_trade = True
+                # If it gapped down below the stop, fill at the worse Open price
+                raw_return = min(current_stop_loss, open_ret)
+                exit_reason = "TRAILING_STOP" if current_stop_loss > 0 else "STOP_LOSS"
             elif high_ret >= TARGET_RETURN:
                 exit_trade, raw_return, exit_reason = True, TARGET_RETURN, "TARGET_HIT"
             elif pos["Days_Held"] >= MAX_HOLD_DAYS:
@@ -149,31 +175,35 @@ def run_simulation():
         nav = cash + sum(p["Current_Value"] for p in open_positions)
         portfolio_history.append({"Date": current_date, "NAV": nav, "Cash": cash, "Positions_Count": len(open_positions)})
 
-        # 3. Enter New Positions (Signal at Close, Fill at Next Open)
-        eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
-        open_tickers = {p["Ticker"] for p in open_positions}
-        available_slots = MAX_POSITIONS - len(open_positions)
+        # 3. Enter New Positions (Subject to Regime Filter)
+        is_bull_market = regime_map.get(current_date, True)
+        
+        if is_bull_market:
+            eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
+            open_tickers = {p["Ticker"] for p in open_positions}
+            available_slots = MAX_POSITIONS - len(open_positions)
 
-        if available_slots > 0 and not eligible_signals.empty:
-            candidates = eligible_signals[~eligible_signals["Ticker"].isin(open_tickers)].head(available_slots)
-            
-            next_day_data = sig_df.loc[next_date]
-            if isinstance(next_day_data, pd.Series):
-                next_day_data = next_day_data.to_frame().T
-            next_open_map = next_day_data.set_index("Ticker")["Open"].to_dict()
+            if available_slots > 0 and not eligible_signals.empty:
+                candidates = eligible_signals[~eligible_signals["Ticker"].isin(open_tickers)].head(available_slots)
+                
+                next_day_data = sig_df.loc[next_date]
+                if isinstance(next_day_data, pd.Series):
+                    next_day_data = next_day_data.to_frame().T
+                next_open_map = next_day_data.set_index("Ticker")["Open"].to_dict()
 
-            allocation = nav * (1.0 / MAX_POSITIONS)
+                allocation = nav * (1.0 / MAX_POSITIONS)
 
-            for _, cand in candidates.iterrows():
-                tk = cand["Ticker"]
-                if tk in next_open_map and cash >= allocation:
-                    fill_price = next_open_map[tk]
-                    if fill_price > 0:
-                        cash -= allocation
-                        open_positions.append({
-                            "Ticker": tk, "Entry_Date": next_date, "Entry_Price": fill_price,
-                            "Allocated_Capital": allocation, "Current_Value": allocation, "Days_Held": 0
-                        })
+                for _, cand in candidates.iterrows():
+                    tk = cand["Ticker"]
+                    if tk in next_open_map and cash >= allocation:
+                        fill_price = next_open_map[tk]
+                        if fill_price > 0:
+                            cash -= allocation
+                            open_positions.append({
+                                "Ticker": tk, "Entry_Date": next_date, "Entry_Price": fill_price,
+                                "Allocated_Capital": allocation, "Current_Value": allocation, "Days_Held": 0,
+                                "Highest_High": fill_price
+                            })
 
     # --- Generate Institutional Report ---
     perf_df = pd.DataFrame(portfolio_history).set_index("Date")
@@ -187,7 +217,6 @@ def run_simulation():
     sharpe = ((daily_returns.mean() - (RISK_FREE_RATE / 252)) / daily_returns.std()) * np.sqrt(252) if daily_returns.std() > 0 else 0
     max_dd = ((perf_df["NAV"] - perf_df["NAV"].cummax()) / perf_df["NAV"].cummax()).min()
 
-    # Benchmark tracking
     nifty_cagr = np.nan
     if os.path.exists(BENCHMARK_FILE):
         bench = pd.read_parquet(BENCHMARK_FILE)
@@ -199,12 +228,12 @@ def run_simulation():
 
     report = (
         f"==========================================================\n"
-        f"        INSTITUTIONAL PORTFOLIO SIMULATION REPORT         \n"
+        f"      INSTITUTIONAL RISK-ADJUSTED SIMULATION REPORT       \n"
         f"==========================================================\n"
         f"Period:                     {perf_df.index[0].date()} to {perf_df.index[-1].date()}\n"
         f"Initial Capital:            INR {INITIAL_CAPITAL:,.2f}\n"
         f"Final Net Asset Value:      INR {perf_df['NAV'].iloc[-1]:,.2f}\n"
-        f"Friction Deducted:          {ROUNDTRIP_FRICTION * 10000:.0f} bps round-trip\n"
+        f"Risk Rules Applied:         200D SMA Regime Filter + Trailing Stops\n"
         f"----------------------------------------------------------\n"
         f"Strategy CAGR:              {cagr * 100:.2f}%\n"
         f"Nifty 50 Benchmark CAGR:    {nifty_cagr * 100:.2f}%\n"
@@ -216,7 +245,8 @@ def run_simulation():
         f"Win Rate:                   {win_rate * 100:.2f}%\n"
         f"Average Trade Return (Net): {trades_df['Net_Return'].mean() * 100:.2f}%\n"
         f"Target Hit Rate (+20%):     {(trades_df['Exit_Reason'] == 'TARGET_HIT').mean() * 100:.2f}%\n"
-        f"Stop Hit Rate (-8%):        {(trades_df['Exit_Reason'] == 'STOP_LOSS').mean() * 100:.2f}%\n"
+        f"Trailing Stop Rate (+4%):   {(trades_df['Exit_Reason'] == 'TRAILING_STOP').mean() * 100:.2f}%\n"
+        f"Hard Stop Rate (-8%):       {(trades_df['Exit_Reason'] == 'STOP_LOSS').mean() * 100:.2f}%\n"
         f"==========================================================\n"
     )
 
