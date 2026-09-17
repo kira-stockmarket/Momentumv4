@@ -23,7 +23,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install pandas pyarrow numpy scikit-learn xgboost lightgbm catboost
 
-    - name: Run Grid Search Optimizer
+    - name: Ensure 45-Day Targets Exist
+      run: python add_45d_targets.py
+
+    - name: Run Multi-Core Grid Search Optimizer
       run: python optimize_portfolio.py
 
     - name: Commit Optimization Results
@@ -31,5 +34,5 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        git add research_results/
+        git add nifty100_features/ research_results/
         git diff --staged --quiet || (git commit -m "Run portfolio parameter sweep [skip ci]" && git push)
