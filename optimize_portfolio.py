@@ -1,6 +1,7 @@
 import os
 import glob
 import itertools
+import multiprocessing
 import pandas as pd
 import numpy as np
 import xgboost as xgb
@@ -14,18 +15,21 @@ RESULTS_DIR = "research_results"
 
 # --- Fixed Execution Parameters ---
 INITIAL_CAPITAL = 1_000_000.0  
-PROB_THRESHOLD = 0.75          
 ROUNDTRIP_FRICTION = 0.0035    
 RISK_FREE_RATE = 0.06          
-TRAILING_DISTANCE = 0.10       # Always trail by 10% behind high
+TRAILING_DISTANCE = 0.10       
 
-# --- EXPANDED Optimization Grid (500 Combinations) ---
+# --- 10,584 Combinations Grid ---
 PARAM_GRID = {
-    "MAX_POSITIONS": [3, 4, 5, 8, 10],                 # 33%, 25%, 20%, 12.5%, 10% allocation
-    "HARD_STOP_LOSS": [-0.05, -0.06, -0.08, -0.10, -0.12], # Tight to very loose stops
-    "MAX_HOLD_DAYS": [15, 20, 30, 40, 45],             # Fast exits to maximum allowable holds
-    "TRAILING_ACTIVATION": [0.12, 0.15, 0.20, 0.25]    # Early lock-ins vs late trailing
+    "MAX_POSITIONS": [2, 3, 4, 5, 6, 8, 10],                 # 50% down to 10% allocation
+    "HARD_STOP_LOSS": [-0.05, -0.06, -0.08, -0.10, -0.12, -0.15], # Tight to extremely loose stops
+    "MAX_HOLD_DAYS": [15, 20, 30, 40, 45, 50, 60],           # Fast swing to multi-month holds
+    "TARGET_ACTIVATION": [0.12, 0.15, 0.20, 0.25, 0.30, 0.35],# When to lock in profits / trail
+    "PROB_THRESHOLD": [0.60, 0.65, 0.70, 0.75, 0.80, 0.85]   # ML conviction limits
 }
+
+# Global variable for multiprocessing memory efficiency
+global_sig_df = None
 
 def load_panel_data():
     parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
@@ -42,7 +46,6 @@ def load_panel_data():
     return panel.sort_index()
 
 def generate_signals_once(clean_df, features, target):
-    """Generate and cache signals so we don't retrain the ML model 500 times."""
     start_year = 2018
     end_year = clean_df.index.year.max()
     signals = []
@@ -75,20 +78,27 @@ def generate_signals_once(clean_df, features, target):
 
     return pd.concat(signals).sort_index()
 
-def simulate_ledger(sig_df, max_pos, stop_loss, max_hold, trail_act):
-    """Runs a highly optimized, fast ledger simulation for a given parameter set."""
-    unique_dates = sig_df.index.unique().sort_values()
+def init_worker(sig_df_shared):
+    global global_sig_df
+    global_sig_df = sig_df_shared
+
+def simulate_wrapper(params):
+    max_pos = params["MAX_POSITIONS"]
+    stop_loss = params["HARD_STOP_LOSS"]
+    max_hold = params["MAX_HOLD_DAYS"]
+    trail_act = params["TARGET_ACTIVATION"]
+    prob_thresh = params["PROB_THRESHOLD"]
+    
+    unique_dates = global_sig_df.index.unique().sort_values()
     nav, cash = INITIAL_CAPITAL, INITIAL_CAPITAL
     open_positions, portfolio_history = [], []
-    
-    # Corrected interest compounding
     daily_rf = (1.0 + RISK_FREE_RATE) ** (1 / 252) - 1.0
 
     for i in range(len(unique_dates) - 1):
         current_date, next_date = unique_dates[i], unique_dates[i + 1]
         cash *= (1.0 + daily_rf) 
 
-        todays_data = sig_df.loc[current_date]
+        todays_data = global_sig_df.loc[current_date]
         if isinstance(todays_data, pd.Series): todays_data = todays_data.to_frame().T
         stock_map = todays_data.set_index("Ticker").to_dict(orient="index")
 
@@ -131,13 +141,13 @@ def simulate_ledger(sig_df, max_pos, stop_loss, max_hold, trail_act):
         nav = cash + sum(p["Current_Value"] for p in open_positions)
         portfolio_history.append({"Date": current_date, "NAV": nav})
 
-        eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
+        eligible_signals = todays_data[todays_data["Signal_Prob"] >= prob_thresh].sort_values(by="Signal_Prob", ascending=False)
         open_tickers = {p["Ticker"] for p in open_positions}
         available_slots = max_pos - len(open_positions)
 
         if available_slots > 0 and not eligible_signals.empty:
             candidates = eligible_signals[~eligible_signals["Ticker"].isin(open_tickers)].head(available_slots)
-            next_day_data = sig_df.loc[next_date]
+            next_day_data = global_sig_df.loc[next_date]
             if isinstance(next_day_data, pd.Series): next_day_data = next_day_data.to_frame().T
             next_open_map = next_day_data.set_index("Ticker")["Open"].to_dict()
             allocation = nav * (1.0 / max_pos)
@@ -157,14 +167,14 @@ def simulate_ledger(sig_df, max_pos, stop_loss, max_hold, trail_act):
     perf_df = pd.DataFrame(portfolio_history).set_index("Date")
     total_days = (perf_df.index[-1] - perf_df.index[0]).days
     
-    if total_days == 0 or perf_df["NAV"].iloc[0] == 0: return 0, 0, 0
+    if total_days == 0 or perf_df["NAV"].iloc[0] == 0: return params, 0, 0, 0
     
     cagr = ((perf_df["NAV"].iloc[-1] / perf_df["NAV"].iloc[0]) ** (365.25 / total_days)) - 1.0
     daily_returns = perf_df["NAV"].pct_change().dropna()
     sharpe = ((daily_returns.mean() - (RISK_FREE_RATE / 252)) / daily_returns.std()) * np.sqrt(252) if daily_returns.std() > 0 else 0
     max_dd = ((perf_df["NAV"] - perf_df["NAV"].cummax()) / perf_df["NAV"].cummax()).min()
 
-    return cagr, sharpe, max_dd
+    return params, cagr, sharpe, max_dd
 
 def run_optimization():
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -181,53 +191,46 @@ def run_optimization():
     ]
 
     clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
-    
-    # Generate ML signals once, then reuse for all 500 combinations
     sig_df = generate_signals_once(clean_df, features, target)
 
     keys, values = zip(*PARAM_GRID.items())
     combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+    total_combs = len(combinations)
     
-    print(f"\nStarting Grid Search over {len(combinations)} combinations...")
+    print(f"\nStarting Multiprocessing Grid Search over {total_combs} combinations...")
+    
+    cores = max(1, multiprocessing.cpu_count() - 1)
     results = []
-
-    for idx, params in enumerate(combinations):
-        cagr, sharpe, max_dd = simulate_ledger(
-            sig_df, 
-            params["MAX_POSITIONS"], 
-            params["HARD_STOP_LOSS"], 
-            params["MAX_HOLD_DAYS"], 
-            params["TRAILING_ACTIVATION"]
-        )
-        
-        results.append({
-            "Max Pos": params["MAX_POSITIONS"],
-            "Stop Loss": f"{params['HARD_STOP_LOSS']*100:.0f}%",
-            "Hold Days": params["MAX_HOLD_DAYS"],
-            "Trail Trigger": f"{params['TRAILING_ACTIVATION']*100:.0f}%",
-            "CAGR": cagr,
-            "Sharpe": sharpe,
-            "Max DD": max_dd
-        })
-        
-        # Keep track of progress
-        if (idx + 1) % 50 == 0:
-            print(f"[{idx+1}/{len(combinations)}] combinations evaluated...")
+    
+    with multiprocessing.Pool(processes=cores, initializer=init_worker, initargs=(sig_df,)) as pool:
+        for idx, (params, cagr, sharpe, max_dd) in enumerate(pool.imap_unordered(simulate_wrapper, combinations)):
+            results.append({
+                "Prob Thresh": f"{params['PROB_THRESHOLD']:.2f}",
+                "Max Pos": params["MAX_POSITIONS"],
+                "Stop Loss": f"{params['HARD_STOP_LOSS']*100:.0f}%",
+                "Hold Days": params["MAX_HOLD_DAYS"],
+                "Target/Trail": f"{params['TARGET_ACTIVATION']*100:.0f}%",
+                "CAGR": cagr,
+                "Sharpe": sharpe,
+                "Max DD": max_dd
+            })
+            
+            if (idx + 1) % 500 == 0:
+                print(f"[{idx+1}/{total_combs}] combinations evaluated...")
 
     results_df = pd.DataFrame(results).sort_values(by="CAGR", ascending=False)
     
-    # Formatting for clean output
     results_df["CAGR"] = (results_df["CAGR"] * 100).map("{:.2f}%".format)
     results_df["Sharpe"] = results_df["Sharpe"].map("{:.2f}".format)
     results_df["Max DD"] = (results_df["Max DD"] * 100).map("{:.2f}%".format)
 
-    print("\n==================================================================")
-    print("                TOP 10 EXECUTION SETUPS (BY CAGR)                 ")
-    print("==================================================================")
-    print(results_df.head(10).to_string(index=False))
-    print("==================================================================")
+    print("\n==================================================================================")
+    print("                      TOP 15 EXECUTION SETUPS (BY CAGR)                           ")
+    print("==================================================================================")
+    print(results_df.head(15).to_string(index=False))
+    print("==================================================================================")
 
-    results_df.to_csv(os.path.join(RESULTS_DIR, "parameter_sweep_results.csv"), index=False)
+    results_df.to_csv(os.path.join(RESULTS_DIR, "parameter_sweep_10k_results.csv"), index=False)
 
 if __name__ == "__main__":
     run_optimization()
