@@ -6,253 +6,112 @@ import xgboost as xgb
 import lightgbm as lgb
 from catboost import CatBoostClassifier
 from sklearn.ensemble import VotingClassifier
+from sklearn.metrics import roc_auc_score, brier_score_loss
 
 FEATURE_DIR = "nifty100_features"
-BENCHMARK_FILE = "benchmark_data/NSEI.parquet" 
 RESULTS_DIR = "research_results"
+TARGET = "target_20_before_m8_45d"
 
-# --- OPTIMIZED INSTITUTIONAL EXECUTION PARAMETERS ---
-INITIAL_CAPITAL = 1_000_000.0  
-MAX_POSITIONS = 4              # 25% NAV per trade
-PROB_THRESHOLD = 0.75          # AI High-Conviction Only
-ROUNDTRIP_FRICTION = 0.0035    
-RISK_FREE_RATE = 0.06          # <--- Fixed missing variable
+FEATURES = [
+    'ret_1d', 'ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 
+    'dist_sma_20', 'dist_sma_60', 'dist_ema_20', 'dist_ema_60', 
+    'dist_52w_high', 'dist_20d_high', 'range_expansion', 
+    'atr_14', 'realized_vol_20d', 'volatility_expansion', 
+    'rel_volume_20d', 'turnover_acceleration', 'dist_obv_20', 
+    'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d',
+    'excess_sector_ret_20d', 'sector_regime_dist'
+]
 
-# --- MOMENTUM RIDING RULES ---
-HARD_STOP_LOSS = -0.15         # Give trades room to survive shakeouts
-MAX_HOLD_DAYS = 60             # Give winners time to run
-TRAILING_ACTIVATION = 0.35     # Only lock in after a massive +35% move
-TRAILING_DISTANCE = 0.10       # Trail 10% behind the peak
-
-def load_panel_data():
-    parquet_files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
-    df_list = []
-    for f in parquet_files:
+def load_clean_panel():
+    files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
+    dfs = []
+    for f in files:
         ticker = os.path.basename(f).replace("_features.parquet", "")
         tdf = pd.read_parquet(f)
         if isinstance(tdf.columns, pd.MultiIndex):
             tdf.columns = tdf.columns.droplevel(1)
-        tdf["Ticker"] = ticker
+        tdf['Ticker'] = ticker
+        dfs.append(tdf)
         
-        # Self-healing logic for the 45-day target if it's missing in some files
-        if 'target_20_before_m8_45d' not in tdf.columns:
-            target_col = np.full(len(tdf), np.nan)
-            if len(tdf) > 46:
-                opens = tdf['Open'].values
-                highs = tdf['High'].values
-                lows = tdf['Low'].values
-                for i in range(len(tdf) - 46):
-                    entry_price = opens[i + 1]
-                    if pd.isna(entry_price) or entry_price <= 0: continue
-                    target_price = entry_price * 1.20
-                    stop_price = entry_price * 0.92
-                    window_highs = highs[i + 1 : i + 46]
-                    window_lows = lows[i + 1 : i + 46]
-                    hit = 0
-                    for h, l in zip(window_highs, window_lows):
-                        if l <= stop_price: break
-                        if h >= target_price:
-                            hit = 1
-                            break
-                    target_col[i] = hit
-            tdf['target_20_before_m8_45d'] = target_col
-            
-        df_list.append(tdf)
-    panel = pd.concat(df_list)
+    panel = pd.concat(dfs).sort_index()
     panel.index = pd.to_datetime(panel.index)
-    return panel.sort_index()
 
-def generate_out_of_sample_signals(clean_df, features, target):
+    # Fill any missing optional feature values with 0
+    for col in FEATURES:
+        if col not in panel.columns:
+            panel[col] = 0.0
+        else:
+            panel[col] = panel[col].fillna(0.0)
+
+    # Only keep historical rows where resolved targets exist
+    clean = panel.dropna(subset=[TARGET, 'Open', 'High', 'Low', 'Close']).copy()
+    return clean
+
+def main():
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    df = load_clean_panel()
+
     start_year = 2018
-    end_year = clean_df.index.year.max()
-    signals = []
+    end_year = df.index.year.max()
+    metrics = []
 
-    print(f"Generating OOS Ensemble Signals ({start_year}-{end_year})...")
+    print(f"Starting Walk-Forward Training ({start_year} to {end_year}) with Sector Regime Features...")
+
     for test_year in range(start_year, end_year + 1):
-        test_start_date = pd.to_datetime(f"{test_year}-01-01")
-        embargo_cutoff = test_start_date - pd.Timedelta(days=65) 
-        
-        train_mask = (clean_df.index <= embargo_cutoff)
-        test_mask = clean_df.index.year == test_year
+        test_start = pd.to_datetime(f"{test_year}-01-01")
+        embargo_cutoff = test_start - pd.Timedelta(days=65)
 
-        X_train, y_train = clean_df.loc[train_mask, features], clean_df.loc[train_mask, target]
-        test_data = clean_df.loc[test_mask]
-        if test_data.empty or X_train.empty: continue
+        train_mask = df.index <= embargo_cutoff
+        test_mask = df.index.year == test_year
 
-        scale_weight = (len(y_train) - y_train.sum()) / y_train.sum() if y_train.sum() > 0 else 1.0
+        X_train, y_train = df.loc[train_mask, FEATURES], df.loc[train_mask, TARGET]
+        X_test, y_test = df.loc[test_mask, FEATURES], df.loc[test_mask, TARGET]
 
-        clf_xgb = xgb.XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_weight, random_state=42, n_jobs=-1)
-        clf_lgb = lgb.LGBMClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_weight, random_state=42, n_jobs=-1, verbose=-1)
-        clf_cat = CatBoostClassifier(iterations=300, depth=4, learning_rate=0.03, auto_class_weights='Balanced', random_state=42, verbose=0, thread_count=-1)
-        
-        ensemble = VotingClassifier(estimators=[('xgb', clf_xgb), ('lgb', clf_lgb), ('cat', clf_cat)], voting='soft')
+        if len(X_train) == 0 or len(X_test) == 0 or y_train.sum() == 0 or y_test.sum() == 0:
+            continue
+
+        scale_pos = (len(y_train) - y_train.sum()) / y_train.sum()
+
+        clf_xgb = xgb.XGBClassifier(
+            n_estimators=300, max_depth=4, learning_rate=0.03,
+            scale_pos_weight=scale_pos, random_state=42, n_jobs=-1
+        )
+        clf_lgb = lgb.LGBMClassifier(
+            n_estimators=300, max_depth=4, learning_rate=0.03,
+            scale_pos_weight=scale_pos, random_state=42, n_jobs=-1, verbose=-1
+        )
+        clf_cat = CatBoostClassifier(
+            iterations=300, depth=4, learning_rate=0.03,
+            auto_class_weights='Balanced', random_state=42, verbose=0, thread_count=-1
+        )
+
+        ensemble = VotingClassifier(
+            estimators=[('xgb', clf_xgb), ('lgb', clf_lgb), ('cat', clf_cat)],
+            voting='soft'
+        )
         ensemble.fit(X_train, y_train)
 
-        probs = ensemble.predict_proba(test_data[features])[:, 1]
-        test_subset = test_data[["Ticker", "Open", "High", "Low", "Close"]].copy()
-        test_subset["Signal_Prob"] = probs
-        signals.append(test_subset)
+        probs = ensemble.predict_proba(X_test)[:, 1]
+        auc = roc_auc_score(y_test, probs)
+        brier = brier_score_loss(y_test, probs)
 
-    return pd.concat(signals).sort_index()
+        high_conv_mask = probs >= 0.75
+        prec_75 = (y_test[high_conv_mask] == 1).mean() if high_conv_mask.sum() > 0 else 0.0
 
-def run_simulation():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    df = load_panel_data()
+        metrics.append({
+            "Year": test_year,
+            "Train_Samples": len(X_train),
+            "Test_Samples": len(X_test),
+            "AUC": round(auc, 4),
+            "Brier_Score": round(brier, 4),
+            "Signals_Above_0.75": int(high_conv_mask.sum()),
+            "Precision_Above_0.75": f"{prec_75 * 100:.2f}%"
+        })
+        print(f"[{test_year}] AUC: {auc:.4f} | Brier: {brier:.4f} | Conviction >= 0.75: {high_conv_mask.sum()} (Prec: {prec_75*100:.1f}%)")
 
-    target = "target_20_before_m8_45d"
-    
-    # Sector relative features are included here
-    features = [
-        'ret_1d', 'ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 
-        'dist_sma_20', 'dist_sma_60', 'dist_ema_20', 'dist_ema_60', 
-        'dist_52w_high', 'dist_20d_high', 'range_expansion', 
-        'atr_14', 'realized_vol_20d', 'volatility_expansion', 
-        'rel_volume_20d', 'turnover_acceleration', 'dist_obv_20', 
-        'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d',
-        'excess_sector_ret_20d' 
-    ]
-
-    # Ensure all columns exist to prevent dropna errors
-    for c in features:
-        if c not in df.columns:
-            df[c] = 0.0
-
-    clean_df = df.dropna(subset=features + [target, "Open", "High", "Low", "Close"]).copy()
-    sig_df = generate_out_of_sample_signals(clean_df, features, target)
-
-    unique_dates = sig_df.index.unique().sort_values()
-    nav, cash = INITIAL_CAPITAL, INITIAL_CAPITAL
-    open_positions, portfolio_history, trade_ledger = [], [], []
-    daily_rf = (1.0 + RISK_FREE_RATE) ** (1 / 252) - 1.0
-
-    print("Simulating execution ledger (Momentum Riding Mode)...")
-    for i in range(len(unique_dates) - 1):
-        current_date, next_date = unique_dates[i], unique_dates[i + 1]
-        cash *= (1.0 + daily_rf) 
-
-        todays_data = sig_df.loc[current_date]
-        if isinstance(todays_data, pd.Series): todays_data = todays_data.to_frame().T
-        stock_map = todays_data.set_index("Ticker").to_dict(orient="index")
-
-        surviving_positions = []
-        for pos in open_positions:
-            ticker = pos["Ticker"]
-            pos["Days_Held"] += 1
-
-            if ticker not in stock_map:
-                surviving_positions.append(pos)
-                continue
-
-            row = stock_map[ticker]
-            
-            pos["Highest_High"] = max(pos.get("Highest_High", pos["Entry_Price"]), row["High"])
-            max_gain = (pos["Highest_High"] - pos["Entry_Price"]) / pos["Entry_Price"]
-            
-            low_ret = (row["Low"] - pos["Entry_Price"]) / pos["Entry_Price"]
-            open_ret = (row["Open"] - pos["Entry_Price"]) / pos["Entry_Price"]
-
-            current_stop_loss = HARD_STOP_LOSS
-            if max_gain >= TRAILING_ACTIVATION:
-                current_stop_loss = max(HARD_STOP_LOSS, max_gain - TRAILING_DISTANCE)
-
-            exit_trade, raw_return, exit_reason = False, 0.0, ""
-
-            if low_ret <= current_stop_loss:
-                exit_trade = True
-                raw_return = min(current_stop_loss, open_ret) 
-                exit_reason = "TRAILING_STOP_PROFIT" if current_stop_loss > 0 else "HARD_STOP"
-            elif pos["Days_Held"] >= MAX_HOLD_DAYS:
-                exit_trade = True
-                raw_return = (row["Close"] - pos["Entry_Price"]) / pos["Entry_Price"]
-                exit_reason = "TIME_EXPIRY"
-
-            if exit_trade:
-                net_return = raw_return - ROUNDTRIP_FRICTION
-                cash += pos["Allocated_Capital"] * (1.0 + net_return)
-                trade_ledger.append({
-                    "Ticker": ticker, "Entry_Date": pos["Entry_Date"], "Exit_Date": current_date,
-                    "Days_Held": pos["Days_Held"], "Net_Return": net_return, "Exit_Reason": exit_reason
-                })
-            else:
-                pos["Current_Value"] = pos["Allocated_Capital"] * (1.0 + (row["Close"] - pos["Entry_Price"]) / pos["Entry_Price"])
-                surviving_positions.append(pos)
-
-        open_positions = surviving_positions
-        nav = cash + sum(p["Current_Value"] for p in open_positions)
-        portfolio_history.append({"Date": current_date, "NAV": nav, "Cash": cash, "Positions_Count": len(open_positions)})
-
-        eligible_signals = todays_data[todays_data["Signal_Prob"] >= PROB_THRESHOLD].sort_values(by="Signal_Prob", ascending=False)
-        open_tickers = {p["Ticker"] for p in open_positions}
-        available_slots = MAX_POSITIONS - len(open_positions)
-
-        if available_slots > 0 and not eligible_signals.empty:
-            candidates = eligible_signals[~eligible_signals["Ticker"].isin(open_tickers)].head(available_slots)
-            next_day_data = sig_df.loc[next_date]
-            if isinstance(next_day_data, pd.Series): next_day_data = next_day_data.to_frame().T
-            next_open_map = next_day_data.set_index("Ticker")["Open"].to_dict()
-            allocation = nav * (1.0 / MAX_POSITIONS)
-
-            for _, cand in candidates.iterrows():
-                tk = cand["Ticker"]
-                if tk in next_open_map and cash >= allocation:
-                    fill_price = next_open_map[tk]
-                    if fill_price > 0:
-                        cash -= allocation
-                        open_positions.append({
-                            "Ticker": tk, "Entry_Date": next_date, "Entry_Price": fill_price,
-                            "Allocated_Capital": allocation, "Current_Value": allocation, "Days_Held": 0,
-                            "Highest_High": fill_price
-                        })
-
-    perf_df = pd.DataFrame(portfolio_history).set_index("Date")
-    trades_df = pd.DataFrame(trade_ledger)
-
-    daily_returns = perf_df["NAV"].pct_change().dropna()
-    total_days = (perf_df.index[-1] - perf_df.index[0]).days
-    cagr = ((perf_df["NAV"].iloc[-1] / perf_df["NAV"].iloc[0]) ** (365.25 / total_days)) - 1.0
-
-    ann_vol = daily_returns.std() * np.sqrt(252)
-    sharpe = ((daily_returns.mean() - (RISK_FREE_RATE / 252)) / daily_returns.std()) * np.sqrt(252) if daily_returns.std() > 0 else 0
-    max_dd = ((perf_df["NAV"] - perf_df["NAV"].cummax()) / perf_df["NAV"].cummax()).min()
-
-    nifty_cagr = np.nan
-    if os.path.exists(BENCHMARK_FILE):
-        bench = pd.read_parquet(BENCHMARK_FILE)
-        bench.index = pd.to_datetime(bench.index)
-        bench_aligned = bench.loc[perf_df.index[0]:perf_df.index[-1], "Close"]
-        nifty_cagr = ((bench_aligned.iloc[-1] / bench_aligned.iloc[0]) ** (365.25 / total_days)) - 1.0
-
-    win_rate = (trades_df["Net_Return"] > 0).mean() if len(trades_df) > 0 else 0.0
-
-    report = (
-        f"==========================================================\n"
-        f"        INSTITUTIONAL MOMENTUM RIDING SIMULATION          \n"
-        f"==========================================================\n"
-        f"Period:                     {perf_df.index[0].date()} to {perf_df.index[-1].date()}\n"
-        f"Initial Capital:            INR {INITIAL_CAPITAL:,.2f}\n"
-        f"Final Net Asset Value:      INR {perf_df['NAV'].iloc[-1]:,.2f}\n"
-        f"Max Positions & Sizing:     {MAX_POSITIONS} ({100/MAX_POSITIONS:.0f}% NAV per trade)\n"
-        f"Friction Deducted:          {ROUNDTRIP_FRICTION * 10000:.0f} bps round-trip\n"
-        f"----------------------------------------------------------\n"
-        f"Strategy CAGR:              {cagr * 100:.2f}%\n"
-        f"Nifty Benchmark CAGR:       {nifty_cagr * 100:.2f}%\n"
-        f"Annualized Volatility:      {ann_vol * 100:.2f}%\n"
-        f"Sharpe Ratio (Rf=6.0%):     {sharpe:.2f}\n"
-        f"Max Drawdown:               {max_dd * 100:.2f}%\n"
-        f"----------------------------------------------------------\n"
-        f"Total Trades Completed:     {len(trades_df)}\n"
-        f"Win Rate:                   {win_rate * 100:.2f}%\n"
-        f"Average Trade Return (Net): {trades_df['Net_Return'].mean() * 100:.2f}%\n"
-        f"Max Profit in a Single Trade: {trades_df['Net_Return'].max() * 100:.2f}%\n"
-        f"Riding Trailing Stop Exits: {(trades_df['Exit_Reason'] == 'TRAILING_STOP_PROFIT').mean() * 100:.2f}%\n"
-        f"Time Expiry Exits:          {(trades_df['Exit_Reason'] == 'TIME_EXPIRY').mean() * 100:.2f}%\n"
-        f"Hard Stop Hit Rate:         {(trades_df['Exit_Reason'] == 'HARD_STOP').mean() * 100:.2f}%\n"
-        f"==========================================================\n"
-    )
-    print(report)
-    with open(os.path.join(RESULTS_DIR, "portfolio_backtest_report.txt"), "w") as f: f.write(report)
-    perf_df.to_parquet(os.path.join(RESULTS_DIR, "equity_curve.parquet"), engine="pyarrow")
-    trades_df.to_parquet(os.path.join(RESULTS_DIR, "trade_ledger.parquet"), engine="pyarrow")
+    metrics_df = pd.DataFrame(metrics)
+    metrics_df.to_csv(os.path.join(RESULTS_DIR, "walk_forward_metrics.csv"), index=False)
+    print("\nEnsemble Walk-Forward Validation Complete.")
 
 if __name__ == "__main__":
-    run_simulation()
+    main()
