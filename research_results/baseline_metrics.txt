@@ -1,17 +1,17 @@
 --- INSTITUTIONAL V1 BASELINE METRICS ---
 Target: target_20_before_m8_20d
 Out-of-Sample Period: 2024-01-01 to Present
-Base Rate (Actual Event Frequency): 0.0539
-ROC-AUC Score: 0.6204
-Precision (Accuracy of 'Buy' Signals): 0.1024
+Base Rate (Actual Event Frequency): 0.0699
+ROC-AUC Score: 0.5636
+Precision (Accuracy of 'Buy' Signals): 0.1108
 
 Classification Report:
               precision    recall  f1-score   support
 
-         0.0       0.96      0.84      0.89      4302
-         1.0       0.10      0.32      0.15       245
+         0.0       0.94      0.81      0.87      3020
+         1.0       0.11      0.32      0.16       227
 
-    accuracy                           0.81      4547
-   macro avg       0.53      0.58      0.52      4547
-weighted avg       0.91      0.81      0.85      4547
+    accuracy                           0.77      3247
+   macro avg       0.53      0.56      0.52      3247
+weighted avg       0.88      0.77      0.82      3247
 
