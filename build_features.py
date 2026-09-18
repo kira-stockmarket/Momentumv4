@@ -14,7 +14,7 @@ BENCHMARK_DIR = "benchmark_data"
 SECTOR_MAP = {
     # IT
     "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT", "WIPRO.NS": "IT", "TECHM.NS": "IT", 
-    "LTIM.NS": "IT", "COFORGE.NS": "IT", "PERSISTENT.NS": "IT",
+    "LTM.NS": "IT", "COFORGE.NS": "IT", "PERSISTENT.NS": "IT",
     
     # Banks
     "HDFCBANK.NS": "Bank", "ICICIBANK.NS": "Bank", "SBIN.NS": "Bank", "KOTAKBANK.NS": "Bank", 
@@ -29,7 +29,7 @@ SECTOR_MAP = {
     # FMCG
     "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "BRITANNIA.NS": "FMCG", 
     "TATACONSUM.NS": "FMCG", "GODREJCP.NS": "FMCG", "DABUR.NS": "FMCG", "MARICO.NS": "FMCG", 
-    "VBL.NS": "FMCG", "COLPAL.NS": "FMCG", "MCDOWELL-N.NS": "FMCG", "UBL.NS": "FMCG",
+    "VBL.NS": "FMCG", "COLPAL.NS": "FMCG", "UBL.NS": "FMCG",
     
     # Metals & Mining
     "TATASTEEL.NS": "Metal", "HINDALCO.NS": "Metal", "JSWSTEEL.NS": "Metal", "COALINDIA.NS": "Metal", 
@@ -52,7 +52,7 @@ SECTOR_MAP = {
     "ADANIPOWER.NS": "Market", "ADANIENSOL.NS": "Market", "GAIL.NS": "Market",
     
     # Infrastructure, Cement & Others (Mapped to Market Benchmark)
-    "L&T.NS": "Market", "ULTRACEMCO.NS": "Market", "GRASIM.NS": "Market", "AMBUJACEM.NS": "Market", 
+    "LT.NS": "Market", "ULTRACEMCO.NS": "Market", "GRASIM.NS": "Market", "AMBUJACEM.NS": "Market", 
     "SHREECEM.NS": "Market", "ASIANPAINT.NS": "Market", "BERGEPAINT.NS": "Market", "PIDILITIND.NS": "Market",
     "TITAN.NS": "Market", "BHARTIARTL.NS": "Market", "ADANIENT.NS": "Market", "ADANIPORTS.NS": "Market",
     "HAL.NS": "Market", "BEL.NS": "Market", "SIEMENS.NS": "Market", "ABB.NS": "Market", "CGPOWER.NS": "Market",
