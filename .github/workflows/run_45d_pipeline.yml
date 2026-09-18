@@ -26,11 +26,6 @@ jobs:
     - name: 1. Apply 45-Day Targets to Feature Store
       run: python add_45d_targets.py
 
-    - name: 2. Train 45-Day Embargoed Heavy Ensemble
-      run: python train_ensemble_wf.py
-
-    - name: 3. Run 45-Day Portfolio Backtest
-      run: python portfolio_backtest.py
 
     - name: Commit All 45-Day Updates
       run: |
