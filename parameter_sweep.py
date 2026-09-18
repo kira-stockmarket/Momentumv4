@@ -1,3 +1,80 @@
+import os
+import glob
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+from sklearn.ensemble import VotingClassifier
+import itertools
+
+FEATURE_DIR = "nifty100_features"
+TARGET = "target_20_before_m8_45d"
+INITIAL_CAPITAL = 1_000_000.0
+MAX_POSITIONS = 4
+ROUNDTRIP_FRICTION = 0.0035
+RISK_FREE_RATE = 0.06
+
+FEATURES = [
+    'ret_1d', 'ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 
+    'dist_sma_20', 'dist_sma_60', 'dist_ema_20', 'dist_ema_60', 
+    'dist_52w_high', 'dist_20d_high', 'range_expansion', 
+    'atr_14', 'realized_vol_20d', 'volatility_expansion', 
+    'rel_volume_20d', 'turnover_acceleration', 'dist_obv_20', 
+    'rsi_14', 'roc_20', 'excess_ret_1d', 'excess_ret_20d',
+    'excess_sector_ret_20d', 'sector_regime_dist'
+]
+
+def generate_signals():
+    files = sorted(glob.glob(os.path.join(FEATURE_DIR, "*.parquet")))
+    dfs = []
+    for f in files:
+        ticker = os.path.basename(f).replace("_features.parquet", "")
+        tdf = pd.read_parquet(f)
+        if isinstance(tdf.columns, pd.MultiIndex):
+            tdf.columns = tdf.columns.droplevel(1)
+        tdf["Ticker"] = ticker
+        dfs.append(tdf)
+    df = pd.concat(dfs).sort_index()
+    df.index = pd.to_datetime(df.index)
+
+    for col in FEATURES:
+        if col not in df.columns: df[col] = 0.0
+        else: df[col] = df[col].fillna(0.0)
+
+    clean = df.dropna(subset=[TARGET, 'Open', 'High', 'Low', 'Close']).copy()
+    start_year = 2018
+    end_year = df.index.year.max()
+    signals = []
+
+    print("Training OOS Engine Once (This takes a moment)...")
+    for test_year in range(start_year, end_year + 1):
+        test_start = pd.to_datetime(f"{test_year}-01-01")
+        embargo = test_start - pd.Timedelta(days=65)
+
+        train_mask = clean.index <= embargo
+        test_mask = df.index.year == test_year
+
+        X_train, y_train = clean.loc[train_mask, FEATURES], clean.loc[train_mask, TARGET]
+        test_data = df.loc[test_mask]
+
+        if test_data.empty or len(X_train) == 0: continue
+        scale_pos = (len(y_train) - y_train.sum()) / y_train.sum() if y_train.sum() > 0 else 1.0
+
+        clf_xgb = xgb.XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_pos, random_state=42, n_jobs=-1)
+        clf_lgb = lgb.LGBMClassifier(n_estimators=300, max_depth=4, learning_rate=0.03, scale_pos_weight=scale_pos, random_state=42, n_jobs=-1, verbose=-1)
+        clf_cat = CatBoostClassifier(iterations=300, depth=4, learning_rate=0.03, auto_class_weights='Balanced', random_state=42, verbose=0, thread_count=-1)
+
+        ensemble = VotingClassifier(estimators=[('xgb', clf_xgb), ('lgb', clf_lgb), ('cat', clf_cat)], voting='soft')
+        ensemble.fit(X_train, y_train)
+
+        probs = ensemble.predict_proba(test_data[FEATURES])[:, 1]
+        subset = test_data[["Ticker", "Open", "High", "Low", "Close"]].copy()
+        subset["Signal_Prob"] = probs
+        signals.append(subset)
+
+    return pd.concat(signals).sort_index()
+
 def run_sweep():
     sig_df = generate_signals()
     unique_dates = sig_df.index.unique().sort_values()
@@ -106,3 +183,6 @@ def run_sweep():
     res_df = pd.DataFrame(results).sort_values(by="Sharpe", ascending=False).head(15)
     print("\n--- TOP 15 REGIME-ADJUSTED PARAMETERS ---")
     print(res_df.to_string(index=False))
+
+if __name__ == "__main__":
+    run_sweep()
