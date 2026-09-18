@@ -29,7 +29,8 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pandas pyarrow numpy
+        pip install yfinance pandas pyarrow numpy scikit-learn xgboost lightgbm catboost
+        
 
     - name: Run Feature Engine
       run: python build_features.py
