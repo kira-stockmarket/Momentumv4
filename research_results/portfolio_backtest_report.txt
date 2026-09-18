@@ -1,23 +1,23 @@
 ==========================================================
         INSTITUTIONAL MOMENTUM RIDING SIMULATION          
 ==========================================================
-Period:                     2018-01-02 to 2026-07-14
+Period:                     2018-01-01 to 2026-09-16
 Initial Capital:            INR 1,000,000.00
-Final Net Asset Value:      INR 3,765,596.96
+Final Net Asset Value:      INR 2,371,143.42
 Max Positions & Sizing:     4 (25% NAV per trade)
 Friction Deducted:          35 bps round-trip
 ----------------------------------------------------------
-Strategy CAGR:              16.82%
-Nifty Benchmark CAGR:       10.28%
-Annualized Volatility:      13.34%
-Sharpe Ratio (Rf=6.0%):     0.81
-Max Drawdown:               -15.47%
+Strategy CAGR:              10.42%
+Nifty Benchmark CAGR:       9.61%
+Annualized Volatility:      13.88%
+Sharpe Ratio (Rf=6.0%):     0.36
+Max Drawdown:               -28.29%
 ----------------------------------------------------------
-Total Trades Completed:     52
-Win Rate:                   55.77%
-Average Trade Return (Net): 8.15%
-Max Profit in a Single Trade: 44.24%
-Riding Trailing Stop Exits: 36.54%
-Time Expiry Exits:          34.62%
-Hard Stop Hit Rate:         28.85%
+Total Trades Completed:     65
+Win Rate:                   49.23%
+Average Trade Return (Net): 3.77%
+Max Profit in a Single Trade: 51.64%
+Riding Trailing Stop Exits: 26.15%
+Time Expiry Exits:          32.31%
+Hard Stop Hit Rate:         41.54%
 ==========================================================
